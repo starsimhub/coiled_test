@@ -33,10 +33,8 @@ class CoiledCalibration(ss.Calibration):
         t0 = sc.tic()
         self.study = self.make_study()
 
-        #self.run_workers()
+        #self.run_workers() # <-- This is the line from the base class to run locally using multiprocessing
         ################################
-        #client = get_client() # Dask
-
         cluster = coiled.Cluster(
             n_workers=10,
             name='StarsimCalibrationOnCoiled'
