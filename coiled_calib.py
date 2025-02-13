@@ -44,10 +44,10 @@ class CoiledCalibration(ss.Calibration):
             client.submit(
                 self.study.optimize,
                 self.run_trial,
-                n_trials=self.run_args.n_trials,
+                n_trials=self.run_args.n_trials, # 1?
                 pure=False
             )
-            for _ in range(self.run_args.n_workers)
+            for _ in range(self.run_args.n_workers) # n_trials?
         ]
 
         wait(futures)
@@ -144,7 +144,12 @@ def build_sim(sim, calib_pars, **kwargs):
     return ms
 
 
-#%% Define the tests
+def extract_prevalence(sim):
+    df = pd.DataFrame({
+            'x': sim.results.sir.n_infected, # Instead of prevalence, let's compute it from infected and n_alive
+            'n': sim.results.n_alive,
+        }, index=pd.Index(sim.results.timevec, name='t'))
+    return df
 
 def test_coiled(do_plot=True):
     sc.heading('Testing a single parameter (beta) with a normally distributed likelihood, one data point')
@@ -176,10 +181,7 @@ def test_coiled(do_plot=True):
         #    't1': [ss.date(d) for d in ['2020-01-08']],
         #}).set_index(['t', 't1']),
         
-        extract_fn = lambda sim: pd.DataFrame({
-            'x': sim.results.sir.n_infected, # Instead of prevalence, let's compute it from infected and n_alive
-            'n': sim.results.n_alive,
-        }, index=pd.Index(sim.results.timevec, name='t')),
+        extract_fn = extract_prevalence,
 
         sigma2 = 0.05, # (num_replicates/sigma2_model + 1/sigma2_data)^-1
     )
