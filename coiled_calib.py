@@ -3,11 +3,7 @@ import starsim as ss
 import sciris as sc
 import pandas as pd
 import coiled
-
-cluster = coiled.Cluster(
-    n_workers=10,
-    name='StarsimCalibrationOnCoiled'
-)
+import optuna as op
 
 debug = False # If true, will run in serial
 total_trials = [100, 10][debug]
@@ -39,20 +35,25 @@ class CoiledCalibration(ss.Calibration):
         #self.run_workers()
         ################################
         #client = get_client() # Dask
+
+        cluster = coiled.Cluster(
+            n_workers=10,
+            name='StarsimCalibrationOnCoiled'
+        )
+
         client = cluster.get_client()
         futures = [
             client.submit(
                 self.study.optimize,
                 self.run_trial,
-                n_trials=self.run_args.n_trials, # 1?
+                n_trials=self.run_args.n_trials,
                 pure=False
             )
-            for _ in range(self.run_args.n_workers) # n_trials?
+            for _ in range(self.run_args.n_workers)
         ]
 
         wait(futures)
         #################################
-
 
         study = op.load_study(storage=self.run_args.storage, study_name=self.run_args.study_name, sampler=self.run_args.sampler)
         self.best_pars = sc.objdict(study.best_params)
@@ -182,6 +183,10 @@ def test_coiled(do_plot=True):
         #}).set_index(['t', 't1']),
         
         extract_fn = extract_prevalence,
+        #extract_fn = lambda sim: pd.DataFrame({
+        #    'x': sim.results.sir.n_infected, # Instead of prevalence, let's compute it from infected and n_alive
+        #    'n': sim.results.n_alive,
+        #}, index=pd.Index(sim.results.timevec, name='t')),
 
         sigma2 = 0.05, # (num_replicates/sigma2_model + 1/sigma2_data)^-1
     )
