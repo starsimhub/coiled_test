@@ -2,6 +2,7 @@ from dask.distributed import get_client, wait
 import starsim as ss
 import sciris as sc
 import pandas as pd
+import numpy as np
 import coiled
 import optuna as op
 
@@ -41,6 +42,10 @@ class CoiledCalibration(ss.Calibration):
             name='StarsimCalibrationOnCoiled'
         )
 
+        # backend_storage = op.storages.InMemoryStorage() --> not sure this is needed
+        dask_storage = op.integration.DaskStorage(storage=None,
+                                                  client=cluster.get_client())
+
         client = cluster.get_client()
         futures = [
             client.submit(
@@ -55,7 +60,7 @@ class CoiledCalibration(ss.Calibration):
         wait(futures)
         #################################
 
-        study = op.load_study(storage=self.run_args.storage, study_name=self.run_args.study_name, sampler=self.run_args.sampler)
+        study = op.load_study(storage=dask_storage, study_name=self.run_args.study_name, sampler=self.run_args.sampler)
         self.best_pars = sc.objdict(study.best_params)
         self.elapsed = sc.toc(t0, output=True)
 
@@ -91,6 +96,10 @@ class CoiledCalibration(ss.Calibration):
             self.remove_db()
 
         return self
+
+    # dummy run_trial function --> also triggers the error
+    # def run_trial(self, *args, **kwargs):
+    #     return 0
 
 
 def make_sim():
