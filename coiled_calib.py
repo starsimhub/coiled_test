@@ -1,10 +1,9 @@
-from dask.distributed import get_client, wait
+from dask.distributed import wait
 import starsim as ss
 import sciris as sc
 import pandas as pd
 import numpy as np
 import coiled
-import optuna as op
 
 debug = False # If true, will run in serial
 total_trials = [100, 10][debug]
@@ -24,27 +23,25 @@ class CoiledCalibration(ss.Calibration):
             verbose (bool): whether to print output from each trial
             kwargs (dict): if supplied, overwrite stored run_args (n_trials, n_workers, etc.)
         """
+        import optuna as op
+
         # Load and validate calibration parameters
         if calib_pars is not None:
             self.calib_pars = calib_pars
         self.run_args.update(kwargs) # Update optuna settings
 
+        cluster = coiled.Cluster(
+            n_workers=10,
+            name='StarsimCalibrationOnCoiled',
+        )
+        client = cluster.get_client()
+
         # Run the optimization
         t0 = sc.tic()
+        self.run_args.storage = op.integration.DaskStorage(storage=None, client=client)
         self.study = self.make_study()
 
         #self.run_workers() # <-- This is the line from the base class to run locally using multiprocessing
-        ################################
-        cluster = coiled.Cluster(
-            n_workers=10,
-            name='StarsimCalibrationOnCoiled'
-        )
-
-        # backend_storage = op.storages.InMemoryStorage() --> not sure this is needed
-        dask_storage = op.integration.DaskStorage(storage=None,
-                                                  client=cluster.get_client())
-
-        client = cluster.get_client()
         futures = [
             client.submit(
                 self.study.optimize,
@@ -58,7 +55,7 @@ class CoiledCalibration(ss.Calibration):
         wait(futures)
         #################################
 
-        study = op.load_study(storage=dask_storage, study_name=self.run_args.study_name, sampler=self.run_args.sampler)
+        study = op.load_study(storage=self.run_args.storage, study_name=self.run_args.study_name, sampler=self.run_args.sampler)
         self.best_pars = sc.objdict(study.best_params)
         self.elapsed = sc.toc(t0, output=True)
 
