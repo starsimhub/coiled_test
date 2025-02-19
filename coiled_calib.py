@@ -1,4 +1,5 @@
-from dask.distributed import wait
+import os
+from dask.distributed import wait, LocalCluster
 import starsim as ss
 import sciris as sc
 import pandas as pd
@@ -32,13 +33,15 @@ class CoiledCalibration(ss.Calibration):
         self.run_args.update(kwargs)  # Update optuna settings
 
         with coiled.Cluster(
-                n_workers=10,
+                n_workers=1,
                 name='StarsimCalibrationOnCoiled',
         ) as cluster:
+        # with LocalCluster(processes=False, n_workers=4) as cluster:
             with cluster.get_client() as client:
                 # Run the optimization
                 t0 = sc.tic()
-                self.run_args.storage = op.integration.DaskStorage(storage=None,
+                backend_storage = op.storages.InMemoryStorage()
+                self.run_args.storage = op.integration.DaskStorage(storage=f'sqlite:///{self.run_args.db_name}',
                                                                    client=client)
                 self.study = self.make_study()
 
@@ -95,6 +98,28 @@ class CoiledCalibration(ss.Calibration):
                     self.remove_db()
 
         return self
+
+    def remove_db(self):
+        """ Remove the database file if keep_db is false and the path exists """
+        import optuna as op
+        try:
+            if 'sqlite' in self.run_args.storage:
+                # Delete the file from disk
+                if os.path.exists(self.run_args.db_name):
+                    os.remove(self.run_args.db_name)
+                if self.verbose:
+                    print(f'Removed existing calibration file {self.run_args.db_name}')
+            else:
+                pass
+                # Delete the study from the database e.g., mysql
+                #op.delete_study(study_name=self.run_args.study_name, storage=self.run_args.storage)
+                #if self.verbose:
+                #    print(f'Deleted study {self.run_args.study_name} in {self.run_args.storage}')
+        except Exception as E:
+            if self.verbose:
+                print('Could not delete study, skipping...')
+                print(str(E))
+        return
 
     # dummy run_trial function --> also triggers the error
     # def run_trial(self, *args, **kwargs):
