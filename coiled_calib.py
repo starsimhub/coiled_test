@@ -33,14 +33,13 @@ class CoiledCalibration(ss.Calibration):
         self.run_args.update(kwargs)  # Update optuna settings
 
         with coiled.Cluster(
-                n_workers=1,
-                name='StarsimCalibrationOnCoiled',
+            n_workers=1,
+            name='StarsimCalibrationOnCoiled',
         ) as cluster:
         # with LocalCluster(processes=False, n_workers=4) as cluster:
             with cluster.get_client() as client:
                 # Run the optimization
                 t0 = sc.tic()
-                backend_storage = op.storages.InMemoryStorage()
                 self.run_args.storage = op.integration.DaskStorage(storage=f'sqlite:///{self.run_args.db_name}',
                                                                    client=client)
                 self.study = self.make_study()
@@ -91,6 +90,23 @@ class CoiledCalibration(ss.Calibration):
                 self.parse_study(study)
 
                 if self.verbose: print('Best pars:', self.best_pars)
+
+                # Retrieve study db data from remote Dask cluster and save results to a local file.
+                # This let's us continue to have study results after the cluster is shut down.
+                def get_db_data():
+                    with open(f"/opt/coiled/{self.run_args.db_name}", "rb") as f:
+                        data = f.read()
+                        return data
+
+                db_data = client.run_on_scheduler(get_db_data)
+                with open(self.run_args.db_name, "wb") as f:
+                    f.write(db_data)
+
+                # Reload study with local file for future use
+                self.run_args.storage = f"sqlite:///{self.run_args.db_name}"
+                self.study = op.load_study(storage=self.run_args.storage,
+                                      study_name=self.run_args.study_name,
+                                      sampler=self.run_args.sampler)
 
                 # Tidy up
                 self.calibrated = True
