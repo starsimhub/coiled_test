@@ -1,10 +1,14 @@
 import os
-from dask.distributed import wait, LocalCluster
-import starsim as ss
-import sciris as sc
+import dask.distributed as distributed
+import coiled
+
 import pandas as pd
 import numpy as np
-import coiled
+
+import starsim as ss
+import sciris as sc
+
+import matplotlib.pyplot as plt
 
 debug = False  # If true, will run in serial
 total_trials = [100, 10][debug]
@@ -14,6 +18,11 @@ do_plot = True
 
 class CoiledCalibration(ss.Calibration):
 
+    def __init__(self, on_coiled=False, n_workers=1,*args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.on_coiled = on_coiled
+        self.n_workers = n_workers
+
     def calibrate(self, calib_pars=None, load=False, tidyup=True, **kwargs):
         """
         Perform calibration using dask/coiled
@@ -22,7 +31,7 @@ class CoiledCalibration(ss.Calibration):
             calib_pars (dict): if supplied, overwrite stored calib_pars
             load (bool): whether to load existing trials from the database (if rerunning the same calibration)
             tidyup (bool): whether to delete temporary files from trial runs
-            verbose (bool): whether to print output from each trial
+            on_coiled (bool): whether to run a cluster on coiled or a local cluster (experimental)
             kwargs (dict): if supplied, overwrite stored run_args (n_trials, n_workers, etc.)
         """
         import optuna as op
@@ -32,11 +41,12 @@ class CoiledCalibration(ss.Calibration):
             self.calib_pars = calib_pars
         self.run_args.update(kwargs)  # Update optuna settings
 
-        with coiled.Cluster(
-            n_workers=1,
-            name='StarsimCalibrationOnCoiled',
-        ) as cluster:
-        # with LocalCluster(processes=False, n_workers=4) as cluster:
+        if self.on_coiled:
+            cluster = coiled.Cluster(n_workers=self.n_workers, name='StarsimCalibrationOnCoiled')
+        else:
+            cluster = distributed.LocalCluster(processes=False, n_workers=self.n_workers)
+
+        with cluster:
             with cluster.get_client() as client:
                 # Run the optimization
                 t0 = sc.tic()
@@ -55,7 +65,7 @@ class CoiledCalibration(ss.Calibration):
                     for _ in range(self.run_args.n_workers)
                 ]
 
-                wait(futures)
+                distributed.wait(futures)
                 #################################
 
                 study = op.load_study(storage=self.run_args.storage,
@@ -89,7 +99,8 @@ class CoiledCalibration(ss.Calibration):
                 # Compare the results
                 self.parse_study(study)
 
-                if self.verbose: print('Best pars:', self.best_pars)
+                if self.verbose:
+                    print('Best pars:', self.best_pars)
 
                 # Retrieve study db data from remote Dask cluster and save results to a local file.
                 # This let's us continue to have study results after the cluster is shut down.
@@ -98,15 +109,16 @@ class CoiledCalibration(ss.Calibration):
                         data = f.read()
                         return data
 
-                db_data = client.run_on_scheduler(get_db_data)
-                with open(self.run_args.db_name, "wb") as f:
-                    f.write(db_data)
+                if self.on_coiled:
+                    db_data = client.run_on_scheduler(get_db_data)
+                    with open(self.run_args.db_name, "wb") as f:
+                        f.write(db_data)
 
-                # Reload study with local file for future use
+                # Reload study from the local file for future use
                 self.run_args.storage = f"sqlite:///{self.run_args.db_name}"
                 self.study = op.load_study(storage=self.run_args.storage,
-                                      study_name=self.run_args.study_name,
-                                      sampler=self.run_args.sampler)
+                                          study_name=self.run_args.study_name,
+                                          sampler=self.run_args.sampler)
 
                 # Tidy up
                 self.calibrated = True
@@ -114,32 +126,6 @@ class CoiledCalibration(ss.Calibration):
                     self.remove_db()
 
         return self
-
-    def remove_db(self):
-        """ Remove the database file if keep_db is false and the path exists """
-        import optuna as op
-        try:
-            if 'sqlite' in self.run_args.storage:
-                # Delete the file from disk
-                if os.path.exists(self.run_args.db_name):
-                    os.remove(self.run_args.db_name)
-                if self.verbose:
-                    print(f'Removed existing calibration file {self.run_args.db_name}')
-            else:
-                pass
-                # Delete the study from the database e.g., mysql
-                #op.delete_study(study_name=self.run_args.study_name, storage=self.run_args.storage)
-                #if self.verbose:
-                #    print(f'Deleted study {self.run_args.study_name} in {self.run_args.storage}')
-        except Exception as E:
-            if self.verbose:
-                print('Could not delete study, skipping...')
-                print(str(E))
-        return
-
-    # dummy run_trial function --> also triggers the error
-    # def run_trial(self, *args, **kwargs):
-    #     return 0
 
 
 def make_sim():
@@ -255,10 +241,12 @@ def test_coiled(do_plot=True):
         reseed=False,
         components=[prevalence],
         total_trials=total_trials,
-        n_workers=None,  # None indicates to use all available CPUs
+        on_coiled=True,
+        n_workers=1,
         die=True,
         debug=debug,
         keep_db=True,
+        continue_db=False
     )
 
     # Perform the calibration
@@ -275,9 +263,12 @@ def test_coiled(do_plot=True):
         calib.plot(bootstrap=True)
         calib.plot_optuna(
             ['plot_param_importances', 'plot_optimization_history'])
+        plt.show()
 
     return sim, calib
 
 
 if __name__ == '__main__':
-    test_coiled()
+    sim, calib = test_coiled()
+    calib.plot_optuna(methods="plot_optimization_history")
+    plt.show()
